@@ -12,6 +12,7 @@ using Fika.Core.Networking;
 using Fika.Core;
 using UnityEngine;
 using MOAR.Networking;
+using PresetSyncPacket = MOAR.Packets.PresetSyncPacket;
 
 namespace MOAR.Helpers
 {

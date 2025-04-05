@@ -1,6 +1,7 @@
 ﻿using System.Collections.Generic;
+using MOAR.Helpers;
 
-namespace MOAR.Helpers
+namespace MOAR
 {
     /// <summary>
     /// Represents a server response payload containing all available AI spawn presets.

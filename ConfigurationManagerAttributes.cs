@@ -1,7 +1,7 @@
 ﻿using System;
 using BepInEx.Configuration;
 
-namespace MOAR.Helpers
+namespace MOAR
 {
     /// <summary>
     /// Custom UI metadata for BepInEx ConfigurationManager integration.

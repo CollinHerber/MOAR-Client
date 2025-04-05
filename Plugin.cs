@@ -18,6 +18,7 @@ using MOAR.Helpers;
 using MOAR.Networking;
 using MOAR.Packets;
 using MOAR.Patches;
+using PresetSyncPacket = MOAR.Networking.PresetSyncPacket;
 
 namespace MOAR
 {

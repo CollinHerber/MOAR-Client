@@ -1,6 +1,6 @@
 ﻿using LiteNetLib.Utils;
 
-namespace MOAR.Networking
+namespace MOAR.Packets
 {
     /// <summary>
     /// Sync packet sent from server to clients to broadcast the active MOAR preset.
