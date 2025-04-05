@@ -1,48 +1,129 @@
+﻿using System;
+using System.Linq;
+using System.Threading.Tasks;
 using Comfort.Common;
 using EFT;
 using EFT.Communications;
+using MOAR.Components.Notifications;
+using MOAR.Data;
 using SPT.Reflection.Utils;
+using UnityEngine;
 
 namespace MOAR.Helpers
 {
-    public class Methods
+    /// <summary>
+    /// Utility methods used across MOAR for player tracking, debug notifications,
+    /// and sync-safe network-aware message display.
+    /// </summary>
+    public static class Methods
     {
-        public static void DisplayMessage(
-            string message,
-            ENotificationIconType notificationType = ENotificationIconType.Quest
-        )
+        /// <summary>
+        /// Displays a client-side notification and optionally broadcasts to other players if in FIKA multiplayer.
+        /// Safe for single-player, host, client, and headless environments.
+        /// </summary>
+        public static void DisplayMessage(string message, ENotificationIconType icon = ENotificationIconType.Quest)
         {
-            var currentMessage = new GClass2269(
-                message,
-                ENotificationDurationType.Long,
-                notificationType
-            );
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                Plugin.LogSource.LogWarning("[DisplayMessage] Tried to show null or empty message.");
+                return;
+            }
 
-            NotificationManagerClass.DisplayNotification(currentMessage);
+            try
+            {
+                var notification = new DebugNotification
+                {
+                    Notification = message,
+                    NotificationIcon = icon
+                };
+
+                notification.Display();
+
+                if (Settings.IsFika)
+                    notification.BroadcastToClients();
+            }
+            catch (Exception ex)
+            {
+                Plugin.LogSource.LogError($"[DisplayMessage] Exception: {ex.Message}");
+            }
         }
 
-        public static async void RefreshLocationInfo()
+        /// <summary>
+        /// Asynchronously refreshes backend location info (e.g. after map changes).
+        /// </summary>
+        public static async Task RefreshLocationInfo()
         {
-            if (PatchConstants.BackEndSession != null)
-                await PatchConstants.BackEndSession.GetLevelSettings();
-            // await PatchConstants.BackEndSession.GetWeatherAndTime();
+            try
+            {
+                if (PatchConstants.BackEndSession != null)
+                {
+                    await PatchConstants.BackEndSession.GetLevelSettings().ConfigureAwait(false);
+                }
+                else
+                {
+                    Plugin.LogSource.LogWarning("[RefreshLocationInfo] Backend session unavailable.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.LogSource.LogError($"[RefreshLocationInfo] Failed to refresh: {ex.Message}");
+            }
         }
 
+        /// <summary>
+        /// Retrieves the player's current world position and map for use in spawn-related tools.
+        /// Returns a fallback response if player or game state is invalid.
+        /// </summary>
         public static AddSpawnRequest GetPlayersCoordinatesAndLevel()
         {
-            var position = Singleton<GameWorld>.Instance.MainPlayer.Position;
-            var location = Singleton<GameWorld>.Instance.MainPlayer.Location;
-
-            return new AddSpawnRequest
+            try
             {
-                map = location,
-                position = new Ixyz
+                var gameWorld = Singleton<GameWorld>.Instance;
+                var player = gameWorld?.MainPlayer;
+
+                if (player == null)
                 {
-                    x = position.x,
-                    y = position.y,
-                    z = position.z,
-                },
-            };
+                    Plugin.LogSource.LogWarning("[GetPlayersCoordinatesAndLevel] MainPlayer is null.");
+                    return new AddSpawnRequest { Map = "Unknown", Position = new Ixyz() };
+                }
+
+                var pos = player.Position;
+
+                return new AddSpawnRequest
+                {
+                    Map = player.Location ?? "Unknown",
+                    Position = new Ixyz
+                    {
+                        X = pos.x,
+                        Y = pos.y,
+                        Z = pos.z
+                    }
+                };
+            }
+            catch (Exception ex)
+            {
+                Plugin.LogSource.LogError($"[GetPlayersCoordinatesAndLevel] Exception: {ex.Message}");
+                return new AddSpawnRequest { Map = "Unknown", Position = new Ixyz() };
+            }
+        }
+
+        /// <summary>
+        /// Detects when the user presses the AnnounceKey and shows the current preset.
+        /// Used during runtime for debug or multiplayer awareness.
+        /// </summary>
+        public static void CheckAnnounceKey()
+        {
+            try
+            {
+                if (Settings.AnnounceKey?.Value.BetterIsDown() == true)
+                {
+                    Settings.AnnounceManually();
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.LogSource.LogError($"[CheckAnnounceKey] Failed to announce: {ex.Message}");
+            }
         }
     }
 }
