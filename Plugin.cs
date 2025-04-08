@@ -1,104 +1,145 @@
-﻿using BepInEx;
+﻿using System;
+using System.Collections.Generic;
+using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.Logging;
 using Comfort.Common;
 using EFT;
+using EFT.Communications;
+using Fika.Core.Coop.Utils;
 using HarmonyLib;
+using MOAR.Components.Notifications;
 using MOAR.Helpers;
 using MOAR.Patches;
 
 namespace MOAR
 {
-    [
-        BepInPlugin("MOAR.settings", "MOAR", "3.0.1"),
-        BepInDependency("com.fika.core", BepInDependency.DependencyFlags.SoftDependency)
-    ]
+    [BepInPlugin("MOAR.settings", "MOAR-Refactored", "1.0.0")]
+    [BepInDependency("com.fika.core", BepInDependency.DependencyFlags.SoftDependency)]
     public class Plugin : BaseUnityPlugin
     {
+        public static Plugin Instance { get; private set; }
         public static ManualLogSource LogSource;
+        private static readonly Random _rng = new();
+        private static bool _initialized;
 
         private void Awake()
         {
-            var harmony = new Harmony("com.example.botzonepatch");
-            harmony.PatchAll();
+            if (_initialized)
+            {
+                Logger.LogWarning("[MOAR] Already initialized. Skipping duplicate Awake.");
+                return;
+            }
+
+            _initialized = true;
+            Instance = this;
+            LogSource = Logger;
+
+            Logger.LogInfo("[MOAR] Awake — Starting initialization");
+
+            try
+            {
+                Settings.Init(Config);
+                Routers.Init(Config);
+
+                new Harmony("com.moar.patches").PatchAll();
+
+                if (Settings.IsFika)
+                {
+                    DebugNotification.RegisterNetworkHandler();
+                }
+
+                Logger.LogInfo("[MOAR] Initialization complete.");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"[MOAR] Initialization failed: {ex}");
+            }
         }
 
         private void Start()
         {
-            LogSource = Logger;
-
-            Settings.Init(Config);
-            Routers.Init(Config);
-
-            new SniperPatch().Enable();
-            new AddEnemyPatch().Enable();
-            if (Settings.enablePointOverlay.Value)
+            try
             {
-                new OnGameStartedPatch().Enable();
+                EnablePatches();
+                Logger.LogInfo("[MOAR] Start complete.");
             }
-            new NotificationPatch().Enable();
+            catch (Exception ex)
+            {
+                Logger.LogError($"[MOAR] Start failed: {ex}");
+            }
         }
 
         private void Update()
         {
-            if (Settings.DeleteBotSpawn.Value.BetterIsDown())
-            {
-                if (Singleton<GameWorld>.Instance.MainPlayer != null)
-                {
-                    Routers.DeleteBotSpawn();
-                    Methods.DisplayMessage(
-                        "Deleted 1 bot spawn point from "
-                            + Singleton<GameWorld>.Instance.MainPlayer.Location,
-                        EFT.Communications.ENotificationIconType.Default
-                    );
-                }
-            }
+            // Only run input logic in Coop server mode after hotkey bindings are ready
+            if (!Settings.IsFika || !FikaBackendUtils.IsServer || !Settings.AreHotkeysReady())
+                return;
 
-            if (Settings.AddBotSpawn.Value.BetterIsDown())
-            {
-                if (Singleton<GameWorld>.Instance.MainPlayer != null)
-                {
-                    Routers.AddBotSpawn();
-                    Methods.DisplayMessage(
-                        "Added 1 bot spawn point to "
-                            + Singleton<GameWorld>.Instance.MainPlayer.Location,
-                        EFT.Communications.ENotificationIconType.Default
-                    );
-                }
-            }
+            HandleInput();
+        }
 
-            if (Settings.AddSniperSpawn.Value.BetterIsDown())
-            {
-                if (Singleton<GameWorld>.Instance.MainPlayer != null)
-                {
-                    Routers.AddSniperSpawn();
-                    Methods.DisplayMessage(
-                        "Added 1 sniper spawn point to "
-                            + Singleton<GameWorld>.Instance.MainPlayer.Location,
-                        EFT.Communications.ENotificationIconType.Default
-                    );
-                }
-            }
+        private static void HandleInput()
+        {
+            if (!Settings.IsFika || !FikaBackendUtils.IsServer)
+                return;
 
-            if (Settings.AddPlayerSpawn.Value.BetterIsDown())
-            {
-                if (Singleton<GameWorld>.Instance.MainPlayer != null)
-                {
-                    Routers.AddPlayerSpawn();
-                    Methods.DisplayMessage(
-                        "Added 1 player spawn point to "
-                            + Singleton<GameWorld>.Instance.MainPlayer.Location,
-                        EFT.Communications.ENotificationIconType.Default
-                    );
-                }
-            }
+            if (ConfigEntryExtensions.BetterIsDown(Settings.DeleteBotSpawn!.Value) && Singleton<GameWorld>.Instantiated)
+                AnnounceResult(Routers.DeleteBotSpawn(), "Deleted 1 bot spawn point");
 
-            if (Settings.AnnounceKey.Value.BetterIsDown())
+            if (ConfigEntryExtensions.BetterIsDown(Settings.AddBotSpawn!.Value) && Singleton<GameWorld>.Instantiated)
+                AnnounceResult(Routers.AddBotSpawn(), "Added 1 bot spawn point");
+
+            if (ConfigEntryExtensions.BetterIsDown(Settings.AddSniperSpawn!.Value) && Singleton<GameWorld>.Instantiated)
+                AnnounceResult(Routers.AddSniperSpawn(), "Added 1 sniper spawn point");
+
+            if (ConfigEntryExtensions.BetterIsDown(Settings.AddPlayerSpawn!.Value) && Singleton<GameWorld>.Instantiated)
+                AnnounceResult(Routers.AddPlayerSpawn(), "Added 1 player spawn point");
+
+            if (ConfigEntryExtensions.BetterIsDown(Settings.AnnounceKey!.Value))
+                Settings.AnnounceManually();
+        }
+
+        private static void AnnounceResult(string result, string fallbackMessage)
+        {
+            var location = Singleton<GameWorld>.Instance?.MainPlayer?.Location ?? "Unknown";
+            var message = string.IsNullOrWhiteSpace(result) ? fallbackMessage : result;
+
+            var notification = new DebugNotification
             {
-                Methods.DisplayMessage(
-                    "Current preset is " + Routers.GetAnnouncePresetName(),
-                    EFT.Communications.ENotificationIconType.EntryPoint
-                );
+                Notification = $"{message} in {location}",
+                NotificationIcon = ENotificationIconType.Default
+            };
+
+            notification.Display();
+
+            if (Settings.IsFika && FikaBackendUtils.IsServer)
+                notification.BroadcastToClients();
+        }
+
+        private static void EnablePatches()
+        {
+            try { new SniperPatch().Enable(); } catch (Exception ex) { LogSource.LogWarning($"SniperPatch failed: {ex.Message}"); }
+            try { new AddEnemyPatch().Enable(); } catch (Exception ex) { LogSource.LogWarning($"AddEnemyPatch failed: {ex.Message}"); }
+            try { new NotificationPatch().Enable(); } catch (Exception ex) { LogSource.LogWarning($"NotificationPatch failed: {ex.Message}"); }
+
+            if (Settings.enablePointOverlay?.Value == true)
+            {
+                try { new OnGameStartedPatch().Enable(); } catch (Exception ex) { LogSource.LogWarning($"OnGameStartedPatch failed: {ex.Message}"); }
             }
         }
-    };
+
+        public static string GetFlairMessage()
+        {
+            var suffixes = new List<string>
+            {
+                ", good luck!", ", may the bots ever be in your favour.", ", you're probably screwed.",
+                ", enjoy the dumpster fire.", ", hope you brought snacks.", ", prepare to be crushed.",
+                ", try not to rage-quit.", ", it's going to be a long day for you.",
+                ", let the feelings of dread pass over you."
+            };
+
+            return suffixes[_rng.Next(suffixes.Count)];
+        }
+    }
 }

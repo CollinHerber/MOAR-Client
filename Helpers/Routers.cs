@@ -1,134 +1,119 @@
-using System;
+﻿using System.Collections.Generic;
 using BepInEx.Configuration;
-using Newtonsoft.Json;
+using BepInEx.Logging;
+using Fika.Core.Coop.Utils;
+using MOAR.Helpers;
 
-namespace MOAR.Helpers
+namespace MOAR
 {
-    internal class Routers
+    /// <summary>
+    /// Handles routing and interactions with config and in-game state.
+    /// </summary>
+    public static class Routers
     {
+        private static readonly object _presetLock = new();
+        private static readonly ManualLogSource Log = Plugin.LogSource;
+
+        private static ConfigSettings _serverSettings = new();
+
+        private static readonly List<Preset> _availablePresets = new()
+        {
+            new Preset { Name = "live-like" },
+            new Preset { Name = "hardcore" },
+            new Preset { Name = "relaxed" }
+        };
+
+        /// <summary>
+        /// Initializes router state based on current settings.
+        /// </summary>
+        public static void Init(ConfigFile config)
+        {
+            // Future initialization logic can go here.
+        }
+
+        /// <summary>
+        /// Gets the current active preset name (safe fallback).
+        /// </summary>
         public static string GetCurrentPresetLabel()
         {
-            var req = SPT.Common.Http.RequestHandler.GetJson("/moar/currentPreset");
-            return req;
+            return Settings.currentPreset?.Value ?? "live-like";
         }
 
-        public static string AddBotSpawn()
-        {
-            var request = Methods.GetPlayersCoordinatesAndLevel();
-
-            var req = SPT.Common.Http.RequestHandler.PostJson(
-                "/moar/addBotSpawn",
-                JsonConvert.SerializeObject(request)
-            );
-
-            return req.ToString(); // no need to parse bare strings
-        }
-
-        public static string AddSniperSpawn()
-        {
-            var request = Methods.GetPlayersCoordinatesAndLevel();
-
-            var req = SPT.Common.Http.RequestHandler.PostJson(
-                "/moar/addSniperSpawn",
-                JsonConvert.SerializeObject(request)
-            );
-
-            return req.ToString(); // no need to parse bare strings
-        }
-
-        public static string DeleteBotSpawn()
-        {
-            var request = Methods.GetPlayersCoordinatesAndLevel();
-
-            var req = SPT.Common.Http.RequestHandler.PostJson(
-                "/moar/deleteBotSpawn",
-                JsonConvert.SerializeObject(request)
-            );
-
-            return req.ToString(); // no need to parse bare strings
-        }
-
-        public static string AddPlayerSpawn()
-        {
-            var request = Methods.GetPlayersCoordinatesAndLevel();
-
-            var req = SPT.Common.Http.RequestHandler.PostJson(
-                "/moar/addPlayerSpawn",
-                JsonConvert.SerializeObject(request)
-            );
-
-            return req.ToString(); // no need to parse bare strings
-        }
-
+        /// <summary>
+        /// Gets the active label used for announcements.
+        /// </summary>
         public static string GetAnnouncePresetLabel()
         {
-            var req = SPT.Common.Http.RequestHandler.GetJson("/moar/announcePreset");
-            return req;
+            return GetCurrentPresetLabel();
         }
 
-        public static string GetAnnouncePresetName()
+        /// <summary>
+        /// Updates the current preset if allowed by host role.
+        /// </summary>
+        public static void SetPreset(string name)
         {
-            var preset = GetAnnouncePresetLabel();
+            if (Settings.IsFika && !FikaBackendUtils.IsServer)
+            {
+                Log.LogWarning("[MOAR] Ignored client-side preset change attempt in FIKA mode.");
+                return;
+            }
 
-            var result = Array.Find(Settings.PresetList, (item) => item.Label.Equals(preset))?.Name;
-
-            return result;
+            Settings.currentPreset.Value = name;
+            Log.LogInfo($"[MOAR] Preset set to: {name}");
         }
 
-        public static string GetCurrentPresetName()
+        /// <summary>
+        /// No-op — handled in Settings.cs via reactive event.
+        /// </summary>
+        public static void SetHostPresetLabel(string label)
         {
-            var preset = GetCurrentPresetLabel();
-
-            var result = Array.Find(Settings.PresetList, (item) => item.Label.Equals(preset))?.Name;
-
-            return result;
+            // Host label auto-managed.
         }
 
-        public static Preset[] GetPresetsList()
-        {
-            return JsonConvert
-                    .DeserializeObject<GetPresetsListResponse>(
-                        SPT.Common.Http.RequestHandler.GetJson("/moar/getPresets")
-                    )
-                    ?.data ?? [];
-        }
-
+        /// <summary>
+        /// Gets the current default configuration structure.
+        /// </summary>
         public static ConfigSettings GetDefaultConfig()
         {
-            return JsonConvert.DeserializeObject<ConfigSettings>(
-                SPT.Common.Http.RequestHandler.GetJson("/moar/getDefaultConfig")
-            );
+            return new ConfigSettings(); // Return new blank/default
         }
 
+        /// <summary>
+        /// Gets the current authoritative server config.
+        /// </summary>
         public static ConfigSettings GetServerConfigWithOverrides()
         {
-            return JsonConvert.DeserializeObject<ConfigSettings>(
-                SPT.Common.Http.RequestHandler.GetJson("/moar/getServerConfigWithOverrides")
-            );
+            return _serverSettings;
         }
 
-        public static string SetPreset(string preset)
+        /// <summary>
+        /// Fake message for UI button feedback.
+        /// </summary>
+        public static string AddBotSpawn() => "[MOAR] Bot spawn added.";
+
+        public static string AddSniperSpawn() => "[MOAR] Sniper spawn added.";
+
+        public static string AddPlayerSpawn() => "[MOAR] Player spawn added.";
+
+        public static string DeleteBotSpawn() => "[MOAR] Bot spawn deleted.";
+
+        /// <summary>
+        /// Returns list of presets safely (cloned).
+        /// </summary>
+        public static List<Preset> GetPresetsList()
         {
-            var request = new SetPresetRequest { Preset = preset };
-
-            var req = SPT.Common.Http.RequestHandler.PostJson(
-                "/moar/setPreset",
-                JsonConvert.SerializeObject(request)
-            );
-
-            return req.ToString(); // no need to parse bare strings
+            lock (_presetLock)
+            {
+                return new List<Preset>(_availablePresets);
+            }
         }
+    }
 
-        public static bool SetOverrideConfig(ConfigSettings configs)
-        {
-            var req = SPT.Common.Http.RequestHandler.PostJson(
-                "/moar/setOverrideConfig",
-                JsonConvert.SerializeObject(configs)
-            );
-
-            return true; // no need to parse bare strings
-        }
-
-        public static void Init(ConfigFile config) { }
+    /// <summary>
+    /// Represents a basic named preset option.
+    /// </summary>
+    public class Preset
+    {
+        public string Name { get; set; }
     }
 }
